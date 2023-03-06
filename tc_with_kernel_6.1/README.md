@@ -51,4 +51,8 @@ The code is heavily commented to help new users (hopefully) understand some of w
 
 ## Building the code
 
-The `/make.sh` will build our skeleton code using `bpftool` and merge it all together into a single binary that will inject the eBPF code at runtime. 
+The `/make.sh` will build our skeleton code using `bpftool` and merge it all together into a single binary that will inject the eBPF code at runtime.
+
+## Thanks
+
+Goes out to a number of repos with example code, the kernel test(s) and a few other places.
