@@ -3,7 +3,7 @@ echo "Generating vmlinux.h"
 bpftool btf dump file /sys/kernel/btf/vmlinux format c > ../../headers/vmlinux.h
 
 echo "Compiling eBPF code"
-clang -O2 -g -Wall -target bpf -D__TARGET_ARCH_x86  -c ../../ebpf/tc_ingress/tc.c -o ./tc.o -v
+clang -O2 -g -Wall -target bpf -D__TARGET_ARCH_x86  -c ../../../ebpf/tc_ingress/tc.c -o ./tc.o -v
 
 echo "Stripping eBPF code"
 llvm-strip -g tc.o

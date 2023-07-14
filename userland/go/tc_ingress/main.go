@@ -25,7 +25,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" bpf ../../ebpf/tc_ingress/tc.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" bpf ../../../ebpf/tc_ingress/tc.c -- -I../headers
 
 func main() {
 	if len(os.Args) < 5 {
