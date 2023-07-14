@@ -7,7 +7,7 @@
 
 #include <net/if.h>
 #include <arpa/inet.h>
-#include "backends.h"
+#include "../ebpf/tc_ingress/backends.h"
 
 static volatile sig_atomic_t exiting = 0;
 
