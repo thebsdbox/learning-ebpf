@@ -15,25 +15,37 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/PraserX/ipconv"
-
 	tc "github.com/florianl/go-tc"
 	"github.com/florianl/go-tc/core"
 
 	"golang.org/x/sys/unix"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" bpf ../ebpf/tc_ingress/tc.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" bpf ../../ebpf/tc_ingress/tc.c -- -I../headers
 
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatalf("Please specify a network interface")
+	if len(os.Args) < 5 {
+		log.Fatalf("Usage: lb <interface_name> port <ip1> <ip2> backendPort")
 	}
 
 	// Look up the network interface by name.
 	ifaceName := os.Args[1]
+	lb_port, err := strconv.Atoi(os.Args[2])
+	if err != nil {
+		log.Fatalf("Usage: lb <interface_name> port <ip1> <ip2> backendPort, err: %v", err)
+	}
+
+	backend1 := os.Args[3]
+	backend2 := os.Args[4]
+	backendPort, err := strconv.Atoi(os.Args[5])
+	if err != nil {
+		log.Fatalf("Usage: lb <interface_name> port <ip1> <ip2> backendPort, err: %v", err)
+	}
+
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
 		log.Fatalf("lookup network iface %q: %s", ifaceName, err)
@@ -46,12 +58,12 @@ func main() {
 	}
 	defer objs.Close()
 
-	be1, _ := ipconv.IPv4ToInt(net.ParseIP("172.17.0.3"))
-	be2, _ := ipconv.IPv4ToInt(net.ParseIP("172.17.0.3"))
-	err = objs.SvcMap.Put(uint16(9090), bpfBackends{
+	be1, _ := ipconv.IPv4ToInt(net.ParseIP(backend1))
+	be2, _ := ipconv.IPv4ToInt(net.ParseIP(backend2))
+	err = objs.SvcMap.Put(uint16(lb_port), bpfBackends{
 		Backend1: HostToNetLong(be1),
 		Backend2: HostToNetLong(be2),
-		DestPort: uint16(80),
+		DestPort: uint16(backendPort),
 	})
 
 	if err != nil {
