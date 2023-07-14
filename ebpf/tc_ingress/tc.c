@@ -1,6 +1,6 @@
 // +build ignore
 
-#include "vmlinux.h"
+#include "../headers/vmlinux.h"
 #include "tc.h"
 
 // Called by the tc_ingress function (which is attached to the ingress of a network interface)
@@ -52,7 +52,7 @@ int balance(struct __sk_buff * ctx) {
       // Neither TCP or UDP, so ignore the packet
       return TC_ACT_OK;
     }
- 
+  
     // Store the destination port to use as a lookup key
     __u16 key = bpf_ntohs(bpf_tuple.ipv4.dport);
     struct backends * lookup;
