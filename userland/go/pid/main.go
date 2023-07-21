@@ -13,7 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" bpf ../../../ebpf/pid/pid.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target bpfel -cc clang -cflags "-O2 -g -Wall -Werror" bpf ../../../ebpf/pid/pid.c -- -I../headers
 
 func main() {
 	exit := 1
@@ -41,7 +41,7 @@ func main() {
 	copy(arr[:len(pidString)], pidString)
 
 	if err := objs.PidMap.Put(uint32(0), bpfPidWatch{
-		PidString: arr,
+		PidString:    arr,
 		PidStringLen: uint64(len(pidString)),
 	}); err != nil {
 		log.Fatalf("putting map: %s", err)
