@@ -95,7 +95,7 @@ static inline int read_bgp(struct __sk_buff *skb) {
         tcp_hlen = tcph->doff << 2;
         poffset = ETH_HLEN + ip_hlen + tcp_hlen;
         plength = ip_total_length - ip_hlen - tcp_hlen;
-        if (plength >= 18 ) { // Abitrary length, but this seems to be the minimum for a keep alive message
+        if (plength >= 19 ) { // Abitrary length, but this seems to be the minimum for a keep alive message
 
             struct bgp_message bgpm;
             int ret = bpf_skb_load_bytes(skb, poffset, &bgpm, sizeof(bgpm));
