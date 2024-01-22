@@ -5,6 +5,7 @@ go 1.21.3
 require (
 	github.com/cilium/ebpf v0.12.3
 	github.com/kube-vip/kube-vip v0.6.4
+	github.com/praserx/ipconv v1.2.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/vishvananda/netlink v1.2.1-beta.2
 	golang.org/x/sys v0.16.0

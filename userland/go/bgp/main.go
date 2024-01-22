@@ -3,15 +3,19 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/kube-vip/kube-vip/pkg/bgp"
+	"github.com/praserx/ipconv"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
@@ -23,6 +27,9 @@ import (
 func main() {
 
 	ifaceName := flag.String("interface", "eth0", "The interface to watch network traffic on")
+	findNLRI := flag.String("findNLRI", "", "The interface to watch network traffic on")
+	replaceNLRI := flag.String("replaceNLRI", "", "The interface to watch network traffic on")
+
 	//path := flag.String("path", "", "The URL Path to watch for")
 	flag.Parse()
 
@@ -42,6 +49,29 @@ func main() {
 		log.Fatalf("loading objects: %s", err)
 	}
 	defer objs.Close()
+
+	if *findNLRI != "" || *replaceNLRI != "" {
+		nlri := strings.Split(*findNLRI, "/")
+		address, _ := ipconv.IPv4ToInt(net.ParseIP(nlri[0]))
+		prefix, _ := strconv.Atoi(nlri[1])
+
+		nlri2 := strings.Split(*replaceNLRI, "/")
+		address2, _ := ipconv.IPv4ToInt(net.ParseIP(nlri2[0]))
+		prefix2, _ := strconv.Atoi(nlri2[1])
+
+		one := bpfNlri{uint8(prefix), HostToNetLong(address)}
+		two := bpfNlri{uint8(prefix2), HostToNetLong(address2)}
+		err = objs.NlriReplace.Put(one, two)
+		// err = objs.SvcMap.Put(uint16(lb_port), bpfBackends{
+		// 	Backend1: HostToNetLong(be1),
+		// 	Backend2: HostToNetLong(be2),
+		// 	DestPort: uint16(backendPort),
+		// })
+
+		if err != nil {
+			log.Fatalf("add to map failed %w", err)
+		}
+	}
 
 	qdisc := &netlink.GenericQdisc{
 		QdiscAttrs: netlink.QdiscAttrs{
@@ -176,4 +206,11 @@ func cat() {
 	}
 	defer file.Close()
 	readLines(file)
+}
+
+// HostToNetLong converts a 32-bit integer from host to network byte order, aka "htonl"
+func HostToNetLong(i uint32) uint32 {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, i)
+	return binary.BigEndian.Uint32(b)
 }
