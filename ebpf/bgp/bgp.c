@@ -17,6 +17,14 @@ char __license[] SEC("license") = "GPL";
 #define ETH_HLEN 14 /*Ethernet Header Length */
 
 
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(max_entries, 1024);
+  __type(key, struct nlri);
+  __type(value, struct nlri);
+}
+nlri_replace SEC(".maps");
+
 // static inline int bpf_strcmplength(char *s1, char *s2, u32 n);
 // static inline int bpf_strncmpoffset(char *s1, char *s2, u32 n, u32 o);
 
@@ -102,12 +110,19 @@ static inline int read_bgp(struct __sk_buff *skb) {
             {
                 case BGP_OPEN:
                 // statements
-                ret = bpf_skb_load_bytes(skb, poffset, &open_msg, sizeof(open_msg));
+                bpf_skb_load_bytes(skb, poffset, &open_msg, sizeof(open_msg));
                 if (ret != 0) {
                     bpf_printk("error %d",ret);
                     return 0;
                 }
                 bpf_printk("BGP open message AS: %d, identifier: %pI4  ", bpf_ntohs(open_msg.myAS), &open_msg.identifier);
+                
+                // open_msg.myAS = bpf_htons(65002);
+                // ret = bpf_skb_store_bytes(skb,poffset, &open_msg, sizeof(open_msg), BPF_F_RECOMPUTE_CSUM);
+                // if (ret != 0) {
+                //     bpf_printk("error %d",ret);
+                //     return 0;
+                // }
                 break;
 
                 case BGP_UPDATE:
@@ -163,6 +178,12 @@ static inline int read_bgp(struct __sk_buff *skb) {
                         return 0;
                     }
                     bpf_printk("Found the AS %u %u %u", bgp_as.type, bgp_as.lenth, bpf_ntohl(bgp_as.as));
+                    // bgp_as.as = bpf_htonl(65002);
+                    // ret = bpf_skb_store_bytes(skb, pathOffset, &bgp_as, sizeof(bgp_as), BPF_F_RECOMPUTE_CSUM);
+                    // if (ret != 0) {
+                    //     bpf_printk("error %d",ret);
+                    //     return 0;
+                    // }
 
                     lencounter -= sizeof(bgp_path) + bgp_path.len; // shrink the amount of data remaining
                     if (lencounter != 0) {
@@ -177,6 +198,7 @@ static inline int read_bgp(struct __sk_buff *skb) {
                 }
                 poffset += bpf_ntohs(withdrawnlen); // Skip all options
                 //bpf_printk("Remaining data %d", remainingdata);
+                
                 struct nlri nlri;
                 ret = bpf_skb_load_bytes(skb, poffset, &nlri, sizeof(nlri));
                 if (ret != 0) {
@@ -184,6 +206,18 @@ static inline int read_bgp(struct __sk_buff *skb) {
                     return 0;
                 }
                 bpf_printk("Found NLRI info -> %pI4 / %d", &nlri.prefix, nlri.prefixlen);
+                nlri_value *found_nlri;
+                found_nlri = bpf_map_lookup_elem(&nlri_replace, &nlri);
+                if (found_nlri) {
+                    
+                    //set_tcp_dport(skb, ETH_HLEN + sizeof(struct iphdr), bpf_htons(80), bpf_htons(8090));
+                    bpf_printk("Replacing NLRI [%pI4] with [%pI4]", &found_nlri->prefix, &nlri.prefix);
+                    nlri.prefix = found_nlri->prefix;
+                    ret = bpf_skb_store_bytes(skb, poffset, &nlri, sizeof(nlri), BPF_F_RECOMPUTE_CSUM);
+                    if (ret != 0) {
+                        bpf_printk("error %d",ret);
+                        return 0;
+                    }                }
                 
                 break;
                 case BGP_NOTIFICATION:

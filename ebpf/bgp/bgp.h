@@ -1,10 +1,10 @@
 #include "../headers/vmlinux.h"
 
-#define BGP_OPEN		1
-#define BGP_UPDATE		2
+#define BGP_OPEN		    1
+#define BGP_UPDATE		    2
 #define BGP_NOTIFICATION	3
 #define BGP_KEEPALIVE		4
-#define BGP_ROUTE_REFRESH       5
+#define BGP_ROUTE_REFRESH   5
 
 struct bgp_message {
 	__u8 marker[16];
@@ -18,11 +18,15 @@ struct bgp_open {
     __u16 holdTimer;
     __u32 identifier;
 };
-
 struct nlri {
     __u8 prefixlen;
     __u32 prefix;
-};
+} ;
+
+typedef struct  {
+    __u8 prefixlen;
+    __u32 prefix;
+} nlri_value;
 
 struct bgp_path_attributes{
     __u8 flags;
