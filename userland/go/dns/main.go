@@ -10,8 +10,10 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"github.com/praserx/ipconv"
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -22,10 +24,9 @@ import (
 func main() {
 
 	ifaceName := flag.String("interface", "eth0", "The interface to watch network traffic on")
-	findNLRI := flag.String("findNLRI", "", "The interface to watch network traffic on")
-	replaceNLRI := flag.String("replaceNLRI", "", "The interface to watch network traffic on")
+	findName := flag.String("findDomain", "", "The domain to watch for")
+	replaceRecord := flag.String("replaceRecord", "", "The A record to replace for that particular domain")
 
-	//path := flag.String("path", "", "The URL Path to watch for")
 	flag.Parse()
 
 	log.Infof("Starting 🐝 the eBPF DNS watcher, on interface [%s]", *ifaceName)
@@ -35,7 +36,7 @@ func main() {
 	// Look up the network interface by name.
 	devID, err := net.InterfaceByName(*ifaceName)
 	if err != nil {
-		log.Fatalf("lookup network iface %q: %s", ifaceName, err)
+		log.Fatalf("lookup network iface %s: %s", *ifaceName, err)
 	}
 
 	// Load pre-compiled programs into the kernel.
@@ -43,28 +44,22 @@ func main() {
 	if err := loadDnsObjects(&objs, nil); err != nil {
 		log.Fatalf("loading objects: %s", err)
 	}
+
 	defer objs.Close()
+	// Parse the URL Path
+	var dnsName [256]uint8
+	var convertedName [256]uint8
 
-	if *findNLRI != "" || *replaceNLRI != "" {
-		// nlri := strings.Split(*findNLRI, "/")
-		// address, _ := ipconv.IPv4ToInt(net.ParseIP(nlri[0]))
-		// prefix, _ := strconv.Atoi(nlri[1])
+	copy(dnsName[:], *findName)
 
-		// nlri2 := strings.Split(*replaceNLRI, "/")
-		// address2, _ := ipconv.IPv4ToInt(net.ParseIP(nlri2[0]))
-		// prefix2, _ := strconv.Atoi(nlri2[1])
+	if *findName != "" || *replaceRecord != "" {
 
-		// one := bpfNlri{uint8(prefix), HostToNetLong(address)}
-		// two := bpfNlri{uint8(prefix2), HostToNetLong(address2)}
-		// err = objs.NlriReplace.Put(one, two)
-		// // err = objs.SvcMap.Put(uint16(lb_port), bpfBackends{
-		// // 	Backend1: HostToNetLong(be1),
-		// // 	Backend2: HostToNetLong(be2),
-		// // 	DestPort: uint16(backendPort),
-		// // })
-
+		address, _ := ipconv.IPv4ToInt(net.ParseIP(*replaceRecord))
+		tempName := ConvertDomain(*findName)
+		copy(convertedName[:], tempName)
+		err = objs.DnsMap.Put(convertedName, dnsDnsReplace{dnsName, HostToNetLong(address)})
 		if err != nil {
-			log.Fatalf("add to map failed %w", err)
+			log.Fatalf("add to map failed %v", err)
 		}
 	}
 
@@ -188,4 +183,18 @@ func HostToNetLong(i uint32) uint32 {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, i)
 	return binary.BigEndian.Uint32(b)
+}
+
+func ConvertDomain(name string) []byte {
+	var convertedName []byte
+	//var charCount uint8
+	var charPointer int
+	subDomains := strings.Split(name, ".")
+	for x := range subDomains {
+		convertedName = append(convertedName, uint8(len(subDomains[x])))
+		convertedName = append(convertedName, subDomains[x]...)
+		charPointer = charPointer + 1 + len(subDomains[x])
+	}
+	//convertedName = append(convertedName, uint8(0))
+	return convertedName
 }

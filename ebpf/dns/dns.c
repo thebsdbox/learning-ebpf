@@ -15,12 +15,24 @@ char __license[] SEC("license") = "GPL";
 #define TC_ACT_OK 0
 #define ETH_P_IP 0x0800 /* Internet Protocol packet */
 #define ETH_HLEN 14 /*Ethernet Header Length */
+
 static int parse_query(struct __sk_buff *skb, void *query_start, struct dns_query *q);
+//static inline int bpf_strcmplength(char *s1, char *s2, u32 n);
 
+struct dns_replace {
+  __u8 name[MAX_DNS_NAME_LENGTH]; // This should be a char but code generation between here and Go..
+  __u32 arecord; // This should be a char but code generation between here and Go..
+};
 
-static inline int bpf_strcmplength(char *s1, char *s2, u32 n);
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(max_entries, 1024);
+  __type(key, char[MAX_DNS_NAME_LENGTH]);
+  __type(value, struct dns_replace);
+}
+dns_map SEC(".maps");
 
-static inline int read_bgp(struct __sk_buff *skb) {
+static inline int read_dns(struct __sk_buff *skb) {
     void *data_end = (void *)(long)skb->data_end;
     void *data = (void *)(long)skb->data;
     struct ethhdr *eth = data;
@@ -86,6 +98,15 @@ static inline int read_bgp(struct __sk_buff *skb) {
                 {
                     return 0;
                 }
+                
+                struct dns_replace *found_name;
+                // Looking up the domain name in the map
+                if (sizeof(q.name) != 0) {
+                    found_name = bpf_map_lookup_elem(&dns_map, q.name);
+                    if (found_name > 0) {
+                        bpf_printk("Looks like we've found your name [%s]", found_name->name);
+                    }
+                }
                 // Read the DNS response
                 struct dns_response *ar_hdr = data + sizeof(*eth) + sizeof(*iph) + sizeof(*udph) + sizeof(*dns_hdr) + query_length;
                 if ((void*)(ar_hdr + 1) > data_end) {
@@ -102,23 +123,30 @@ static inline int read_bgp(struct __sk_buff *skb) {
                 if (ret != 0) {
                     return 0;
                 }
-                bpf_printk("%pI4", &ip);
-            }
-
-            //Get a pointer to the start of the DNS query
-            void *query_start = (void *)dns_hdr + sizeof(struct dns_hdr);
-
-            struct dns_query q;
-            int query_length = 0;
-            query_length = parse_query(skb, query_start, &q);
-            if (query_length < 1)
-                {
-                    return 0;
+                //bpf_printk("%pI4", &ip);
+                if (found_name) {
+                    bpf_printk("%pI4 -> %pI4", &ip, &found_name->arecord);
+                    ret = bpf_skb_store_bytes(skb, poffset, &found_name->arecord, sizeof(found_name->arecord), BPF_F_RECOMPUTE_CSUM);
+                    if (ret != 0) {
+                        return 0;
+                    }
                 }
-            //bpf_printk("%u %s %u", query_length, q.name, sizeof(q.name));
-            if (bpf_strcmplength(q.name, "github.com", query_length) == 0) {
-                bpf_printk("woo");
             }
+
+            // //Get a pointer to the start of the DNS query
+            // void *query_start = (void *)dns_hdr + sizeof(struct dns_hdr);
+
+            // struct dns_query q;
+            // int query_length = 0;
+            // query_length = parse_query(skb, query_start, &q);
+            // if (query_length < 1)
+            //     {
+            //         return 0;
+            //     }
+            // //bpf_printk("%u %s %u", query_length, q.name, sizeof(q.name));
+            // if (bpf_strcmplength(q.name, "github.com", query_length) == 0) {
+            //     bpf_printk("woo");
+            // }
 
         }   
     }
@@ -191,11 +219,8 @@ static int parse_query(struct __sk_buff *skb, void *query_start, struct dns_quer
         }
 
         //Read and fill data into struct
-        if (*(char *)(cursor) == '\02') {
-            q->name[namepos] = '.';
-        } else {
-            q->name[namepos] = *(char *)(cursor);
-        }
+        q->name[namepos] = *(char *)(cursor);
+   
         namepos++;
         cursor++;
     }
@@ -203,30 +228,31 @@ static int parse_query(struct __sk_buff *skb, void *query_start, struct dns_quer
     return -1;
 }
 
-static inline int bpf_strcmplength(char *s1, char *s2, u32 n)
-{
-    for (int i = 0; i < n && i < sizeof(s1) && i < sizeof(s2); i++)
-    {
-        if (s1[i] != s2[i])
-            return s1[i] - s2[i];
+// static inline int bpf_strcmplength(char *s1, char *s2, u32 n)
+// {
+//     for (int i = 0; i < n && i < sizeof(s1) && i < sizeof(s2); i++)
+//     {
+//         if (s1[i] != s2[i])
+//             return s1[i] - s2[i];
 
-        if (s1[i] == s2[i] == '\0')
-            return 0;
-    }
+//         if (s1[i] == s2[i] == '\0')
+//             return 0;
+//     }
 
-    return 0;
-}
+//     return 0;
+// }
 
-// eBPF hooks
 
+
+// eBPF hooks - This is where the magic happens!
 SEC("tc_in")
 int tc_ingress(struct __sk_buff *skb) {
-    return read_bgp(skb);
+    return read_dns(skb);
 
 }
 
 SEC("tc_egress")
 int tc_egress_(struct __sk_buff *skb)
 {
-    return read_bgp(skb);
+    return read_dns(skb);
 }
