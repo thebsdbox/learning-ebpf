@@ -13,21 +13,15 @@ We will create the directory for our bridge configuration `mkdir -p /etc/qemu/`.
 
 Then we will allow qemu to be allowed to use this bridge (well all bridges, the acl is a pain) `echo "allow all" | sudo tee  /etc/qemu/bridge.conf`.
 
-## Start the VM
+## Start everything (requires `tmux`)
 
-`./qemu.sh`
-
-Starting qemu will start the VM boot process, including the PXE boot process
+This will start a three panel tmux that has a VM on the bridge, a tcpdump on the bridge and our eBPF program on the bridge. 
 
 ```
-iPXE 1.21.1+git-20220113.fbbdc3926-0ubuntu1 -- Open Source Network Boot Firmware
- -- https://ipxe.org
-Features: DNS HTTP HTTPS iSCSI NFS TFTP VLAN AoE ELF MBOOT PXE bzImage Menu PXEX
-
-net0: 52:54:12:11:3c:c0 using 82540em on 0000:00:03.0 (Ethernet) [open]
-  [Link:up, TX:0 TXE:0 RX:0 RXE:0]
-Configuring (net0 52:54:12:11:3c:c0)......
+tmux new-session \; send-keys '\''go generate; go build; sudo ./dhcp -interface virtbr0 -mac 52:54:12:11:3c:c0 -address 10.0.0.1'\'' C-m \; split-window -v\; send-keys '\''sudo tcpdump -i virtbr0'\''\; split-window -v\; select-layout even-vertical
 ```
+
+## Exit from `qemu`
 
 To exit from qemu press `ctrl a` and then press `x`
 
