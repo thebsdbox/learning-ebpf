@@ -10,67 +10,55 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 
-	"github.com/kube-vip/kube-vip/pkg/bgp"
 	"github.com/praserx/ipconv"
-	"github.com/sirupsen/logrus"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" bpf ../../../ebpf/bgp/bgp.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" dhcp ../../../ebpf/dhcp/dhcp.c -- -I../headers
 
 func main() {
 
 	ifaceName := flag.String("interface", "eth0", "The interface to watch network traffic on")
-	findNLRI := flag.String("findNLRI", "", "The interface to watch network traffic on")
-	replaceNLRI := flag.String("replaceNLRI", "", "The interface to watch network traffic on")
+	mac := flag.String("mac", "", "The MAC address to watch for")
 
-	//path := flag.String("path", "", "The URL Path to watch for")
+	address := flag.String("address", "", "The address to apply to the MAC address")
+
 	flag.Parse()
 
-	log.Infof("Starting 🐝 the eBPF BGP watcher, on interface [%s]", *ifaceName)
+	log.Infof("Starting 🐝 the eBPF DHCP watcher, on interface [%s]", *ifaceName)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Look up the network interface by name.
 	devID, err := net.InterfaceByName(*ifaceName)
 	if err != nil {
-		log.Fatalf("lookup network iface %q: %s", ifaceName, err)
+		log.Fatalf("lookup network iface %s: %s", *ifaceName, err)
 	}
-
+	parsedMac, err := net.ParseMAC(*mac)
+	if err != nil {
+		log.Fatalf("lookup network iface %s: %s", *ifaceName, err)
+	}
 	// Load pre-compiled programs into the kernel.
-	objs := bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
+	objs := dhcpObjects{}
+	if err := loadDhcpObjects(&objs, nil); err != nil {
 		log.Fatalf("loading objects: %s", err)
 	}
+	parsedAddress, err := ipconv.IPv4ToInt(net.ParseIP(*address))
+	if err != nil {
+		log.Fatalf("Error parsing IP address %s", err)
+	}
 	defer objs.Close()
-
-	if *findNLRI != "" || *replaceNLRI != "" {
-		nlri := strings.Split(*findNLRI, "/")
-		address, _ := ipconv.IPv4ToInt(net.ParseIP(nlri[0]))
-		prefix, _ := strconv.Atoi(nlri[1])
-
-		nlri2 := strings.Split(*replaceNLRI, "/")
-		address2, _ := ipconv.IPv4ToInt(net.ParseIP(nlri2[0]))
-		prefix2, _ := strconv.Atoi(nlri2[1])
-
-		one := bpfNlri{uint8(prefix), HostToNetLong(address)}
-		two := bpfNlri{uint8(prefix2), HostToNetLong(address2)}
-		err = objs.NlriReplace.Put(one, two)
-		// err = objs.SvcMap.Put(uint16(lb_port), bpfBackends{
-		// 	Backend1: HostToNetLong(be1),
-		// 	Backend2: HostToNetLong(be2),
-		// 	DestPort: uint16(backendPort),
-		// })
-
-		if err != nil {
-			log.Fatalf("add to map failed %w", err)
-		}
+	entry := dhcpDhcpEntry{
+		Address: HostToNetLong(parsedAddress),
+	}
+	err = objs.MacLookup.Put(parsedMac[:6], entry)
+	if err != nil {
+		log.Fatalf("add to map failed %w", err)
 	}
 
 	qdisc := &netlink.GenericQdisc{
@@ -121,26 +109,7 @@ func main() {
 	}
 
 	log.Printf("Press Ctrl-C to exit and remove the program")
-	c := &bgp.Config{
-		AS:       65001,
-		SourceIP: "192.168.0.22",
-		RouterID: "192.168.0.22",
-		Peers: []bgp.Peer{
-			{
-				Address:  "192.168.0.10",
-				AS:       65000,
-				MultiHop: true,
-			},
-		},
-	}
-	b, err := bgp.NewBGPServer(c, nil)
-	if err != nil {
-		logrus.Fatalf("Error starting server [%v]", err)
-	}
-	err = b.AddHost("10.0.0.1/32")
-	if err != nil {
-		logrus.Fatalf("Error starting server [%v]", err)
-	}
+
 	// Drop the logs
 	go cat()
 	<-ctx.Done() // We wait here
@@ -180,7 +149,6 @@ func main() {
 			log.Fatalf("could not get remove filter: %v", err)
 		}
 	}
-	b.Close()
 }
 
 func readLines(r io.Reader) {
