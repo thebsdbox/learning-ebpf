@@ -2,7 +2,7 @@
 
 echo "Starting a network bridge"
 
-sudo ip link add name virtbr0 type bridge
+sudo ip link add name virtbr0 type bridge nf_call_iptables 0
 sudo ip addr add 192.168.1.20/24 dev virtbr0
 sudo ip link set virtbr0 up
 sudo ip tuntap add tap0 mode tap
